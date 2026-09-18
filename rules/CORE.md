@@ -74,20 +74,34 @@ To prevent context windows from overflowing, context is **NEVER** stored in a si
 4. The worker executes, writes their progress back into their specific handoff file, and exits.
 5. Orchestrator reads the worker's handoff to verify completion, then updates `orchestrator_main.md` and moves to the next task.
 
-## 🔀 TIERED EXECUTION (MANDATORY)
+## 🔀 TIERED EXECUTION (MANDATORY — ORCA-FIRST)
+
+> ⛔ **DEFAULT ASSUMPTION**: You are ALWAYS running inside Orca. Attempt TIER 0 first. Only fallback if Orca commands fail.
 
 | Tier | Condition | Action |
 |------|-----------|--------|
-| **TIER 0** | Running inside Orca | **MUST** use `orca terminal create` to spawn CLI-agnostic workers (agy, claude, cline, etc.) following the 4-Step Lifecycle. |
-| **TIER 1** | Agent Tool exists | Use `invoke_subagent` or framework specific tool |
-| **TIER 2** | Tool missing/error | EMBODY agent (fallback only) |
+| **TIER 0** ⭐ | **DEFAULT — Always try first** | **MUST** use `orca terminal create` to spawn CLI-agnostic workers following the 5-Step Lifecycle. |
+| **TIER 1** | TIER 0 failed (orca command error) | Fallback to `invoke_subagent`. Log: `"⚠️ TIER 0 FAILED → TIER 1"` |
+| **TIER 2** | TIER 1 also failed | EMBODY agent (last resort). Log: `"⚠️ TIER 1 FAILED → TIER 2"` |
+
+### ⛔ STRICT FALLBACK CHAIN
+```yaml
+ALWAYS:
+  1. Try TIER 0 (orca) FIRST — you ARE in Orca by default
+  2. If orca fails → log → try TIER 1 (invoke_subagent)
+  3. If TIER 1 fails → log → try TIER 2 (EMBODY)
+
+NEVER:
+  ❌ Skip TIER 0 without attempting orca command first
+  ❌ Assume you're NOT in Orca
+  ❌ Use TIER 1/2 "for efficiency" or "simplicity"
+```
 
 ### ❌ FORBIDDEN
+- Skipping TIER 0 without attempting `orca terminal create` first
 - Leaving Orca terminals open (Always CLOSE after READ)
 - Forgetting the `[ROLE: WORKER]` prefix when spawning workers
 - Using TIER 2 when TIER 0 or TIER 1 available
-❌ FORBIDDEN: Skipping TIER 1 because task is "simple"
-✅ REQUIRED: Attempt TIER 1 first, log if falling back
 
 ---
 
@@ -156,6 +170,47 @@ IF requirement is ambiguous:
 | Assume requirements | ASK for clarification |
 | Silent halt | Notify with options |
 | Meta agent implementing | Meta agents DELEGATE only |
+| **Explore codebase** | **Delegate to `researcher` / `scouter` subagent** |
+| **Read source code** | **Delegate to research subagent** |
+| **Run project commands** | **Delegate to appropriate worker** |
+| **Plan without research** | **Wait for research handoff first** |
+
+### ⛔ ORCHESTRATOR EXPLORATION PROHIBITION (ABSOLUTE)
+
+```yaml
+FORBIDDEN_FOR_ORCHESTRATOR:
+  ❌ list_dir on source directories (src/, components/, pages/, etc.)
+  ❌ find_by_name for source code files
+  ❌ grep_search on source code
+  ❌ view_file on source code (only rules/handoffs/reports allowed)
+  ❌ Running npm, build, test, or any project commands
+  ❌ Creating plans without research phase completed first
+
+ALLOWED_FOR_ORCHESTRATOR:
+  ✅ Reading rules: .agents/rules/*.md, GEMINI.md, .clinerules
+  ✅ Reading handoff files: ./handoffs/**/*.md
+  ✅ Reading subagent reports: ./.reports/**/*.md
+  ✅ Writing handoff files for workers
+  ✅ Analyzing subagent output to coordinate next steps
+
+WORKFLOW:
+  1. Receive user request
+  2. Delegate RESEARCH to flash subagent → writes to handoff
+  3. Read research handoff → analyze
+  4. Delegate PLANNING to inherit (Opus) subagent → reads research → writes plan
+  5. Read plan handoff → validate
+  6. Delegate IMPLEMENTATION per task complexity (flash/pro)
+  7. Prepare REVIEW prompt for Cline → present to user
+```
+
+### 🧠 MODEL STRATEGY (See GEMINI.md for full table)
+
+```yaml
+planner: inherit (Opus 4.6) — deep reasoning
+light_tasks: flash (Gemini Flash 3.8 High) — research, scouting, simple lookups
+heavy_tasks: pro (Gemini Pro 3.1 High) — implementation, complex logic
+reviewer: Cline (external) — prompt prepared for user
+```
 
 ---
 
@@ -165,6 +220,10 @@ IF requirement is ambiguous:
 □ Am I DELEGATING (not executing)?
 □ Am I following WORKFLOW ORDER?
 □ Am I responding in USER'S LANGUAGE?
+□ Am I about to EXPLORE codebase? → STOP → Delegate to researcher (flash)
+□ Am I about to READ source code? → STOP → Delegate to researcher (flash)
+□ Am I assigning the CORRECT MODEL? (flash/pro/inherit/Cline)
+□ Did research handoff COMPLETE before I start planning?
 ```
 
 ---

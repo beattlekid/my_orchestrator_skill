@@ -81,15 +81,31 @@ REPORTS  = ./.reports/{topic}/
 
 ---
 
-## 🔀 TIERED EXECUTION — MANDATORY
+## 🔀 TIERED EXECUTION — MANDATORY (ORCA-FIRST)
+
+> ⛔ **DEFAULT ASSUMPTION**: You are ALWAYS running inside Orca. Attempt TIER 0 first. Only fallback if Orca commands fail.
 
 | Tier | Condition | Action |
 |------|-----------|--------|
-| **TIER 0** | Running inside Orca | **MUST** use `orca terminal create` to spawn CLI-agnostic workers (agy, claude, cline, etc.) following the 4-Step Lifecycle. |
-| **TIER 1** | Agent Tool exists | Use `invoke_subagent` or framework specific tool |
-| **TIER 2** | Tool missing/error | EMBODY agent (fallback only) |
+| **TIER 0** ⭐ | **DEFAULT — Always try first** | **MUST** use `orca terminal create` to spawn CLI-agnostic workers (agy, claude, cline, etc.) following the 5-Step Lifecycle. |
+| **TIER 1** | TIER 0 failed (orca command not found / error) | Fallback to `invoke_subagent` or framework-specific tool. Log: `"⚠️ TIER 0 FAILED: {error} → Falling back to TIER 1"` |
+| **TIER 2** | TIER 1 also failed | EMBODY agent (last resort). Log: `"⚠️ TIER 1 FAILED: {error} → Falling back to TIER 2"` |
+
+### ⛔ STRICT FALLBACK CHAIN
+```yaml
+ALWAYS:
+  1. Try TIER 0 (orca terminal create) FIRST
+  2. If orca command fails → log error → try TIER 1 (invoke_subagent)
+  3. If invoke_subagent fails → log error → try TIER 2 (EMBODY)
+  
+NEVER:
+  ❌ Skip TIER 0 and go directly to TIER 1
+  ❌ Skip TIER 0 because "it's faster to use invoke_subagent"
+  ❌ Assume you're NOT in Orca — you ARE in Orca by default
+```
 
 ### ❌ FORBIDDEN
+- Skipping TIER 0 without attempting `orca terminal create` first
 - Leaving Orca terminals open (Always CLOSE after READ)
 - Forgetting the `[ROLE: WORKER]` prefix when spawning workers
 - Using TIER 2 when TIER 0 or 1 available
@@ -114,8 +130,12 @@ REPORTS  = ./.reports/{topic}/
 □ Am I about to WRITE code? → STOP → Delegate
 □ Am I about to DEBUG? → STOP → Delegate to debugger
 □ Am I about to TEST? → STOP → Delegate to tester
-□ Am I following WORKFLOW ORDER?
+□ Am I about to EXPLORE codebase? → STOP → Delegate to researcher (flash)
+□ Am I about to READ source code? → STOP → Delegate to researcher (flash)
+□ Am I following WORKFLOW ORDER? (Research → Plan → Implement → Review)
+□ Am I assigning the CORRECT MODEL? (flash/pro/inherit/Cline)
 □ Am I responding in USER'S LANGUAGE?
+□ Did RESEARCH complete before PLANNING?
 ```
 
 ---
@@ -163,3 +183,133 @@ REPORTS  = ./.reports/{topic}/
 **📖 NOW: Read `~/.gemini/antigravity/skills/agent-assistant/rules/CORE.md` before proceeding.**
 
 <!-- AGENT-ASSISTANT-END -->
+
+---
+
+## 🧠 MODEL STRATEGY — MANDATORY ASSIGNMENT
+
+> ⛔ **BINDING RULE**: The Orchestrator MUST assign the correct model tier to each subagent based on task complexity. No exceptions.
+
+| Role / Task Type | Orca CLI Model ID (`--model` param) | `invoke_subagent` param | Rationale |
+|-----------------|---------------------------------|-------------------------|-----------|
+| **Planner** (architecture, task breakdown, strategy) | `claude-opus-4-6-thinking` | `inherit` | Deep reasoning required for planning |
+| **Light Tasks** (research, file reading, simple lookups, scouting) | `gemini-3.8-flash-high` | `flash` | Fast, cost-effective for simple tasks |
+| **Heavy Tasks** (implementation, complex logic, architecture design) | `gemini-3.1-pro-high` | `pro` | Strong reasoning for complex engineering |
+| **Reviewer** | `cline` (via Orca) | N/A | Review via Orca `cline` command |
+
+### Model Assignment Rules
+```yaml
+BEFORE spawning any subagent:
+  1. Classify task: light | heavy | planning | review
+  2. Assign model per table above
+  3. Log: "🧠 Model: {model} for {task_type} → {agent_role}"
+
+FORBIDDEN:
+  ❌ Using `inherit` (Opus) for simple research/scouting tasks
+  ❌ Using `flash` for complex implementation or planning
+  ❌ Spawning a subagent for review (use Cline handoff instead)
+```
+
+---
+
+## 🔄 DELEGATION WORKFLOW — STRICT ORDER
+
+> The Orchestrator follows a **sequential pipeline**. Each phase produces a handoff file consumed by the next.
+
+```
+┌─────────────┐    handoff     ┌──────────────┐    handoff     ┌────────────────┐    prompt     ┌──────────┐
+│  RESEARCH   │ ──────────────▶│   PLANNING   │ ──────────────▶│ IMPLEMENTATION │ ────────────▶│  REVIEW  │
+│  (flash)    │   research.md  │  (inherit)   │    plan.md     │  (flash/pro)   │  cline.md    │ (Cline)  │
+└─────────────┘                └──────────────┘                └────────────────┘              └──────────┘
+```
+
+### Phase 1: RESEARCH (Delegate to `flash` subagent)
+```yaml
+trigger: User request received
+agent_model: flash
+output: ./handoffs/{date}-{job}/research.md
+protocol:
+  1. Orchestrator writes research task to handoff
+  2. Spawn flash subagent → reads handoff → explores codebase/docs
+  3. Subagent writes findings back to research.md
+  4. Orchestrator reads research.md → analyzes → moves to Phase 2
+```
+
+### Phase 2: PLANNING (Delegate to `inherit` / Opus planner)
+```yaml
+trigger: Research handoff completed and analyzed
+agent_model: inherit (Opus 4.6)
+input: ./handoffs/{date}-{job}/research.md
+output: ./handoffs/{date}-{job}/plan.md
+protocol:
+  1. Orchestrator prepares planning context from research findings
+  2. Spawn planner subagent → reads research.md → produces plan.md
+  3. Orchestrator reads plan.md → validates → moves to Phase 3
+```
+
+### Phase 3: IMPLEMENTATION (Delegate per task complexity)
+```yaml
+trigger: Plan approved
+agent_model: flash (light) | pro (heavy) — per task
+input: ./handoffs/{date}-{job}/plan.md + domain-specific handoff
+output: Code files + ./handoffs/{date}-{job}/{domain}.md
+protocol:
+  1. Orchestrator decomposes plan into tasks
+  2. Classify each task: light → flash, heavy → pro
+  3. Spawn workers with domain-specific handoffs
+  4. Verify each worker's output → update orchestrator_main.md
+```
+
+### Phase 4: REVIEW (Cline)
+```yaml
+trigger: Implementation completed
+agent_model: cline (via Orca)
+input: Implementation output
+output: Review report
+protocol:
+  1. Orchestrator prepares structured review prompt
+  2. Spawn Cline via Orca: `orca terminal create --command "cline 'Review based on <prompt_file>'"`
+  3. Orchestrator waits for Cline to complete and extracts feedback
+  4. Orchestrator processes feedback and delegates fixes
+```
+
+---
+
+## 🔍 CLINE REVIEWER PROTOCOL (ORCA-BASED)
+
+When review is needed, the Orchestrator MUST:
+
+1. **Prepare a structured review prompt file** (e.g. `cline-review.md`) containing:
+   - Files changed (with paths)
+   - Summary of changes
+   - Acceptance criteria
+   - Specific review focus areas
+   
+2. **Spawn Cline via Orca**:
+   ```bash
+   orca terminal create --command "cline 'Review the project following the instructions in cline-review.md'"
+   ```
+
+3. **Wait & Read**:
+   Use `orca terminal wait` and `orca terminal read` to extract Cline's feedback, then proceed to process the fixes.
+
+---
+
+## ⛔ ORCHESTRATOR EXPLORATION PROHIBITION
+
+```yaml
+FORBIDDEN_FOR_ORCHESTRATOR:
+  ❌ Exploring codebase structure (list_dir, find_by_name on src/)
+  ❌ Reading source code files
+  ❌ Grepping source code
+  ❌ Running project commands (npm, build, test)
+  ❌ Planning without research handoff
+
+ALLOWED_FOR_ORCHESTRATOR:
+  ✅ Reading rules files (.agents/rules/*.md, GEMINI.md)
+  ✅ Reading handoff files (./handoffs/**/*.md)
+  ✅ Reading subagent reports (./.reports/**/*.md)
+  ✅ Writing handoff files for workers
+  ✅ Analyzing subagent output to make decisions
+```
+

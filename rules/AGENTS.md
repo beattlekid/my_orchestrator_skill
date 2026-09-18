@@ -4,23 +4,58 @@
 
 ---
 
-## TIERED EXECUTION
+## TIERED EXECUTION (ORCA-FIRST)
 
-### TIER 1: Sub-agent (MANDATORY when tool exists)
+> ⛔ **DEFAULT ASSUMPTION**: You are ALWAYS running inside Orca. Attempt TIER 0 first. Only fallback to lower tiers if the previous tier's commands fail.
+
+### TIER 0: Orca Terminal ⭐ (DEFAULT — Always try first)
 
 ```yaml
-1. Prepare handoff:
+assumption: "You ARE inside Orca. Always attempt orca commands first."
+
+lifecycle:
+  0. CHECK MODELS (Pre-Check):
+     Run `agy --list-models` or `agy models` to verify available models.
+  
+  1. CREATE (Spawn):
+     Use `orca terminal create --command "<cli_command>"` to spawn the worker.
+     *For AGY*: `orca terminal create --command "agy --model {model_name} --dangerously-skip-permissions -i='[ROLE: WORKER] {task}'"` (MUST use -i, prepend [ROLE: WORKER]).
+     *For Claude*: `orca terminal create --command "claude -p '{task}'"`
+     *For Cline*: `orca terminal create --command "cline '{task}'"`
+  
+  2. WAIT (Sleep):
+     orca terminal wait --terminal {term_id} --for tui-idle
+  
+  3. READ (Extract):
+     orca terminal read --terminal {term_id}
+  
+  4. CLOSE (Cleanup):
+     orca terminal close --terminal {term_id}
+
+on_failure:
+  - Log: "⚠️ TIER 0 FAILED: {error_message}"
+  - Fallback to TIER 1 (invoke_subagent)
+```
+
+### TIER 1: Sub-agent (FALLBACK when TIER 0 fails)
+
+```yaml
+condition: TIER 0 (orca) command returned error or orca not available
+
+1. Log: "⚠️ TIER 0 FAILED → Falling back to TIER 1 (invoke_subagent)"
+
+2. Prepare handoff:
    include: requirements, task, acceptance criteria, constraints
    exclude: internal reasoning, failed attempts
 
-2. Skills analysis: (output required)
+3. Skills analysis: (output required)
    "🎯 Skills Analysis: {simple|complex} → {using X | skipping}"
 
-3. Invoke: runSubagent(agent_name, context)
+4. Invoke: invoke_subagent(agent_name, context)
 
-4. Verify: format matches, criteria met
+5. Verify: format matches, criteria met
 
-5. On error: fallback to TIER 2, log reason
+6. On error: fallback to TIER 2, log reason
 ```
 
 ### TIER 2: EMBODY (Fallback only)
@@ -60,8 +95,9 @@ execution:
 ## 🔍 Tool Discovery
 | Check | Result |
 |-------|--------|
-| Sub-agent tool | ✅ / ❌ |
-| Execution tier | TIER 1 / TIER 2 |
+| Orca terminal (TIER 0) | ✅ DEFAULT / ❌ Failed → fallback |
+| Sub-agent tool (TIER 1) | ✅ / ❌ |
+| Execution tier | TIER 0 / TIER 1 / TIER 2 |
 ```
 
 **Cache**: Tool discovery result is cached for session. Do not re-check.
@@ -109,6 +145,111 @@ result:
 | **support** | docs-manager, devops-engineer, business-analyst, project-manager, reporter | Support |
 
 ---
+
+## 🧠 MODEL ASSIGNMENT — PER TASK TYPE
+
+> ⛔ **BINDING**: Every subagent MUST be spawned with the correct model. No exceptions.
+
+| Task Classification | Orca CLI Model ID (`--model` param) | `invoke_subagent` param | When to Use |
+|--------------------|---------------------------------|-------------------------|-------------|
+| **Planning** | `claude-opus-4-6-thinking` | `inherit` | Architecture, task breakdown, strategy, tech-lead decisions |
+| **Light** | `gemini-3.8-flash-high` | `flash` | Research, scouting, file reading, simple lookups, docs reading |
+| **Heavy** | `gemini-3.1-pro-high` | `pro` | Implementation, complex logic, refactoring, database design |
+| **Review** | `cline` (via Orca) | N/A | Code review, quality checks — spawned directly via Orca CLI |
+
+### Classification Heuristics
+```yaml
+LIGHT (→ flash):
+  - Codebase exploration / structure analysis
+  - Reading and summarizing documentation
+  - Finding files, patterns, dependencies
+  - Simple code lookups / searches
+  - Writing reports / summaries
+
+HEAVY (→ pro):
+  - Writing new features (frontend/backend)
+  - Complex refactoring
+  - Database schema design
+  - API implementation
+  - Bug fixing requiring deep analysis
+  - Performance optimization
+
+PLANNING (→ inherit):
+  - Architecture planning
+  - Task decomposition
+  - Technical strategy
+  - Trade-off analysis
+  - Project roadmap
+
+REVIEW (→ Cline):
+  - Code review
+  - Security audit
+  - Quality assessment
+  - Best practices validation
+```
+
+---
+
+## 📦 RESEARCH-SPECIFIC HANDOFF PATTERN
+
+> Research is ALWAYS Phase 1. The Orchestrator NEVER explores the codebase directly.
+
+### Handoff Structure for Research
+```
+./handoffs/{date}-{job}/
+├── research.md          ← Research subagent writes findings here
+├── orchestrator_main.md ← Orchestrator tracks progress
+├── plan.md              ← Planner writes plan here (Phase 2)
+├── frontend.md          ← Frontend worker reads/writes (Phase 3)
+├── backend.md           ← Backend worker reads/writes (Phase 3)
+└── cline-review.md      ← Review prompt for Cline (Phase 4)
+```
+
+### Research Handoff Template (research.md)
+```markdown
+# Research Handoff — {job_name}
+**Date**: {date}
+**Status**: PENDING | IN_PROGRESS | COMPLETED
+
+## Task
+{What the research subagent needs to investigate}
+
+## Scope
+- [ ] Project structure analysis
+- [ ] Existing code patterns
+- [ ] Available documentation
+- [ ] Dependencies & tech stack
+- [ ] Relevant ZAUI components (if UI)
+- [ ] API patterns (if backend)
+
+## Findings
+{Subagent writes findings here}
+
+## Recommendations
+{Subagent writes recommendations here}
+```
+
+### Research Delegation Protocol
+```yaml
+1. Orchestrator creates: ./handoffs/{date}-{job}/research.md
+   - Fills in Task and Scope sections
+   - Sets Status: PENDING
+
+2. Orchestrator spawns flash subagent:
+   - Role: "Codebase Researcher"
+   - Model: flash
+   - Prompt: "[ROLE: WORKER] Read ./handoffs/{date}-{job}/research.md, 
+     investigate the codebase, and write your findings back to that file.
+     Also read .agents/rules/ZALO-MINI-APP.md for project rules."
+
+3. Subagent executes:
+   - Reads handoff → explores codebase → writes Findings + Recommendations
+   - Sets Status: COMPLETED
+
+4. Orchestrator reads research.md:
+   - Analyzes findings
+   - Proceeds to Phase 2 (Planning)
+```
 
 ## 🔺 AGENT TEAMS — GOLDEN TRIANGLE (`:team` variant only)
 
@@ -238,21 +379,27 @@ IF agent.category == "meta" OR agent.handoffs.length > 0:
 
 ```yaml
 detection:
-  - Choosing TIER 2 without attempting TIER 1
+  - Choosing TIER 1 (invoke_subagent) without attempting TIER 0 (orca) first
+  - Choosing TIER 2 without attempting TIER 0 and TIER 1
   - Justifying EMBODY with "task is simple"
-  - Mentioning "efficiency" when choosing EMBODY
+  - Mentioning "efficiency" or "faster" when skipping TIER 0
+  - Using invoke_subagent without logging TIER 0 failure first
 
 correction:
   1. STOP
-  2. Log: "⚠️ LAZY FALLBACK DETECTED"
-  3. Attempt TIER 1 first
-  4. Only use TIER 2 if TIER 1 actually fails
+  2. Log: "⚠️ LAZY FALLBACK DETECTED — Skipped TIER 0 (Orca)"
+  3. Attempt TIER 0 (orca terminal create) first
+  4. Only use TIER 1 if TIER 0 actually fails (log the error)
+  5. Only use TIER 2 if TIER 1 actually fails (log the error)
 
 strict_rules:
-  ❌ NEVER assess task as "too simple" for sub-agent
+  ❌ NEVER skip TIER 0 (orca) without attempting it first
+  ❌ NEVER assess task as "too simple" for orca
   ❌ NEVER prioritize tokens over context isolation
-  ✅ ALWAYS use sub-agent when tool exists
-  ✅ ALWAYS log sub-agent attempt before any EMBODY
+  ❌ NEVER use invoke_subagent as first choice
+  ✅ ALWAYS attempt orca terminal create FIRST
+  ✅ ALWAYS log TIER 0 failure before falling back
+  ✅ ALWAYS log TIER 1 failure before EMBODY
 ```
 ## ?? ORCA MULTI-TERMINAL ORCHESTRATION (CLI-AGNOSTIC)
 
@@ -279,8 +426,11 @@ To prevent infinite loops ("Inception") and resource leaks (infinite terminals),
 
 1. **CREATE (Spawn)**:
    Use orca terminal create to spawn the worker. 
-   *CRITICAL*: ALWAYS use the -p (print/one-shot) flag so the process exits when done, and ALWAYS prepend [ROLE: WORKER] to trigger the role switch.
-   *Example*: orca terminal create --command "agy --agent devops-engineer -p '[ROLE: WORKER] Check docker-compose.yml'"
+   *CRITICAL*: Do NOT use the `-p` (print) flag because it runs in headless mode and hides the agent's progress. Instead, ALWAYS use the `-i` (interactive) flag for `orca terminal create`. 
+   For `agy`, provide `--model {model_name}` and `--dangerously-skip-permissions`, and prepend `[ROLE: WORKER]` in the `-i` prompt to trigger the role switch.
+   *Example (Antigravity)*: `orca terminal create --command "agy --model gemini-3.1-pro-high --dangerously-skip-permissions -i='[ROLE: WORKER] Check docker-compose.yml'"`
+   *Example (Claude Code)*: `orca terminal create --command "claude -p 'Check docker-compose.yml'"`
+   *Example (Cline)*: `orca terminal create --command "cline 'Check docker-compose.yml'"`
    *(Note the returned terminal ID, e.g., term_123)*
 
 2. **WAIT (Sleep)**:
