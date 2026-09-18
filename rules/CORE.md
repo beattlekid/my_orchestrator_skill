@@ -52,34 +52,27 @@ REPORTS  = ./.reports/{topic}/
 
 ---
 
-## 🎯 COMMAND ROUTING
+## 🎯 WORKFLOW & HANDOFF SYSTEM (DISTRIBUTED CONTEXT)
 
-| Input | File |
-|-------|------|
-| `/cook`, `/cook:hard` | `commands/cook.md` → `commands/cook/hard.md` |
-| `/cook:fast` | `commands/cook/fast.md` (direct) |
-| `/fix`, `/plan`, `/debug`, `/test`, `/review`, `/docs`, `/design`, `/deploy`, `/report` | Same pattern |
-| `/brainstorm` | `commands/brainstorm.md` → variant |
-| `/ask` | `commands/ask.md` → variant |
-| `/code` | `commands/code.md` → variant |
-| `/wiki`, `/wiki:fast`, `/wiki:hard`, `/wiki:team` | `commands/wiki.md` → `commands/wiki/{variant}.md` |
+As the Orchestrator, you do not use hardcoded `/plan` or `/cook` commands. You analyze the user's request and immediately delegate to the appropriate worker. **Even planning is delegated to a `planner` agent.**
 
-**Natural language detection**:
-- "implement/build/create" → `/cook` or `/code`
-- "fix/bug/error/broken" → `/fix`
-- "plan/strategy/approach" → `/plan`
-- "brainstorm/ideas/explore" → `/brainstorm`
-- "question/how/what/why" → `/ask`
-- "code/snippet/generate" → `/code`
-- "Investigate/research/look up" → `/ask` or `/report`
-- "design/ui/ux/mockup" → `/design`
-- "document/docs/readme/spec" → `/docs`
-- "wiki/knowledge base/generate docs from code" → `/wiki`
+### The Distributed Handoff Rule
+To prevent context windows from overflowing, context is **NEVER** stored in a single giant file. It is distributed by domain and tracked by date/job progress.
 
-**Variant syntax**: `/cmd:variant` or `/cmd/variant` both work.
-**Team variant baseline**: `:team` is supported only where `commands/{cmd}/team.md` exists. Deploy uses specialized variants (`check`, `preview`, `production`, `rollback`).
+**Path Structure**: `./handoffs/{date}-{job_name}/`
+- `orchestrator_main.md`: Master checklist, requirements, and worker assignments. (Orchestrator reads/writes this).
+- `planner.md`: High-level architecture and task breakdown.
+- `frontend.md`: UI/UX, components, client-side logic.
+- `backend.md`: API specs, server logic.
+- `database.md`: Schema, queries.
+- `qa.md`: Test cases, bug reports.
 
----
+**Handoff Protocol**:
+1. Orchestrator reads `orchestrator_main.md` to understand current progress.
+2. Orchestrator spawns a worker and points them ONLY to their specific handoff file (e.g., "Read `./handoffs/2026-09-18-auth/backend.md`").
+3. The worker only needs to know what is relevant to them.
+4. The worker executes, writes their progress back into their specific handoff file, and exits.
+5. Orchestrator reads the worker's handoff to verify completion, then updates `orchestrator_main.md` and moves to the next task.
 
 ## 🔀 TIERED EXECUTION (MANDATORY)
 

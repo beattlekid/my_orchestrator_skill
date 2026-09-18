@@ -200,31 +200,25 @@ agents/teams/wiki-team/
 
 ---
 
-## CONTEXT ISOLATION (Clean Handoffs)
+## CONTEXT ISOLATION (Distributed Handoffs)
 
 ```
-INCLUDE:
-  - Original requirements (verbatim)
-  - Decisions from prior phases
-  - Concrete deliverables
-  - Current state
-  - Deliverable size directive (single file vs chunked)
+ORCHESTRATOR'S JOB:
+  1. Analyze user requirements.
+  2. Write high-level plan and task assignments to `./handoffs/{date}-{job}/orchestrator_main.md`.
+  3. Prepare domain-specific handoffs (e.g., `./handoffs/{date}-{job}/backend.md`).
+  4. Spawn the worker and instruct them ONLY to read their specific handoff file.
 
-EXCLUDE:
-  - Internal reasoning
-  - Failed attempts
-  - Alternatives not selected
-```
+WORKER'S JOB:
+  1. Read only the specific handoff file assigned to them. (They only need to know enough to do their job, no more).
+  2. Do not read the entire codebase or master handoff unless explicitly instructed.
+  3. Execute the task.
+  4. Write the results, progress, and any blocker back to THEIR specific handoff file.
 
-### Deliverable Size Directive (MANDATORY in handoff)
-
-```
-WHEN delegating to any agent that produces deliverables:
-  ADD to handoff context:
-    "DELIVERABLE SIZE: If output exceeds 150 lines or has ≥ 4 major sections,
-     use CHUNKED strategy: create folder with 00-index.md first, then each
-     section file sequentially. Never create a single file > 200 lines.
-     Never create multiple files in parallel."
+DELIVERABLE FORMAT:
+  Always organize handoffs by date and job progress:
+  - Good: `./handoffs/2023-10-27-auth-feature/frontend.md`
+  - Bad: `./handoffs/all-context.md` (Do not merge context)
 ```
 
 ---
@@ -277,8 +271,11 @@ The Orchestrator is NOT locked to Antigravity (gy). You can spawn ANY agent CLI
 **QA & Debug**: debugger, 	ester, eviewer, performance-engineer, security-engineer
 **Docs & Research**: docs-manager, eporter, esearcher, designer, wiki-architect, wiki-extractor, wiki-reviewer
 
-### The 4-Step Orchestration Lifecycle
+### The 5-Step Orchestration Lifecycle
 To prevent infinite loops ("Inception") and resource leaks (infinite terminals), every delegation MUST strictly follow this lifecycle:
+
+0. **CHECK MODELS (Pre-Check)**:
+   Run a command (e.g. `agy --list-models` or `agy models`) to verify which models are currently available and active. Use this information to assign the most appropriate model to the worker.
 
 1. **CREATE (Spawn)**:
    Use orca terminal create to spawn the worker. 
